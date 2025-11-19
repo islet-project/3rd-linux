@@ -325,6 +325,7 @@ GEN_PMU_FORMAT_ATTR(threshold_compare);
 GEN_PMU_FORMAT_ATTR(threshold);
 
 static int sysctl_perf_user_access __read_mostly;
+static int sysctl_perf_islet_user_access_all __read_mostly;
 
 static bool armv8pmu_event_is_64bit(struct perf_event *event)
 {
@@ -1270,6 +1271,26 @@ static int armv8pmu_proc_user_access_handler(const struct ctl_table *table, int 
 	return 0;
 }
 
+static void armv8pmu_enable_user_access_all(void *unused)
+{
+    pr_info("[Islet] enable user all\n");
+    update_pmuserenr(ARMV8_PMU_USERENR_ER | ARMV8_PMU_USERENR_CR | ARMV8_PMU_USERENR_EN);
+}
+
+static int armv8pmu_proc_islet_user_access_all_handler(const struct ctl_table *table, int write,
+		void *buffer, size_t *lenp, loff_t *ppos)
+{
+	int ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+    // For perf measurement on islet
+    if (write && sysctl_perf_islet_user_access_all) {
+        on_each_cpu(armv8pmu_enable_user_access_all, NULL, 1);
+    }
+	if (ret || !write || sysctl_perf_user_access)
+		return ret;
+
+	return 0;
+}
+
 static struct ctl_table armv8_pmu_sysctl_table[] = {
 	{
 		.procname       = "perf_user_access",
@@ -1282,12 +1303,26 @@ static struct ctl_table armv8_pmu_sysctl_table[] = {
 	},
 };
 
+static struct ctl_table armv8_islet_pmu_sysctl_table[] = {
+	{
+		.procname       = "perf_islet_user_access_all",
+		.data		= &sysctl_perf_islet_user_access_all,
+		.maxlen		= sizeof(unsigned int),
+		.mode           = 0644,
+		.proc_handler	= armv8pmu_proc_islet_user_access_all_handler,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+};
+
 static void armv8_pmu_register_sysctl_table(void)
 {
 	static u32 tbl_registered = 0;
 
-	if (!cmpxchg_relaxed(&tbl_registered, 0, 1))
+	if (!cmpxchg_relaxed(&tbl_registered, 0, 1)) {
 		register_sysctl("kernel", armv8_pmu_sysctl_table);
+		register_sysctl("kernel", armv8_islet_pmu_sysctl_table);
+    }
 }
 
 static int armv8_pmu_init(struct arm_pmu *cpu_pmu, char *name,
